@@ -5,13 +5,15 @@ import javassist.bytecode.AnnotationsAttribute;
 import javassist.bytecode.annotation.Annotation;
 
 import java.io.*;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.Scanner;
 
 public class Main {
     private static final long VALID_TO_TIME = 4102415999000L;
@@ -26,43 +28,43 @@ public class Main {
             Scanner scanner = new Scanner(System.in);
             System.out.println("请输入MyBatisCodeHelperPro的jar包完整路径：");
             String originalJarPath = scanner.nextLine().trim();
-            
+
             // 检查文件是否为jar
             if (!originalJarPath.endsWith(".jar")) {
                 System.err.println("指定的文件不是jar包！请输入有效的jar文件路径。");
                 return;
             }
-            
+
             // 检查文件是否存在
             File originalJarFile = new File(originalJarPath);
             if (!originalJarFile.exists() || !originalJarFile.isFile()) {
                 System.err.println("指定的jar文件不存在！请检查路径是否正确。");
                 return;
             }
-            
+
             // 确保files目录存在
             File filesDir = new File(FILES_DIR);
             if (!filesDir.exists()) {
                 filesDir.mkdirs();
                 System.out.println("创建files目录: " + filesDir.getAbsolutePath());
             }
-            
+
             // 获取jar文件名
             String jarFileName = originalJarFile.getName();
             File localJarFile = new File(FILES_DIR, jarFileName);
             File backupJarFile = new File(FILES_DIR, jarFileName + ".origin");
-            
+
             // 复制jar文件到files目录
             Files.copy(originalJarFile.toPath(), localJarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             System.out.println("已将jar包复制到: " + localJarFile.getAbsolutePath());
-            
+
             // 创建原始文件备份
             Files.copy(localJarFile.toPath(), backupJarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             System.out.println("已创建原始jar包备份: " + backupJarFile.getAbsolutePath());
-            
+
             // 执行反编译命令
             decompileJarFile(jarFileName);
-            
+
             // 分析反编译结果，查找目标类
             String targetClass = findTargetClass();
             if (targetClass == null) {
@@ -71,7 +73,7 @@ public class Main {
                 return;
             }
             System.out.println("找到目标类: " + targetClass);
-            
+
             // 从jar包中提取目标类文件
             File extractedClassFile = extractClassFromJar(jarFileName, targetClass);
             if (extractedClassFile == null) {
@@ -79,22 +81,22 @@ public class Main {
                 cleanupFiles(jarFileName, false);
                 return;
             }
-            
+
             // 验证提取的文件是否存在
             if (!extractedClassFile.exists()) {
                 System.err.println("提取的类文件不存在: " + extractedClassFile.getAbsolutePath());
                 cleanupFiles(jarFileName, false);
                 return;
             }
-            
+
             // 修改目标类文件
             String classPath = new File(FILES_DIR).getAbsolutePath();
             System.out.println("使用ClassPath: " + classPath);
             modifyClassFile(targetClass, classPath);
-            
+
             // 替换修改后的类文件回jar包
             replaceClassInJar(jarFileName, targetClass);
-            
+
             // 将修改后的jar包复制回原始位置
             try {
                 Files.copy(localJarFile.toPath(), originalJarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -104,16 +106,16 @@ public class Main {
                 System.err.println("请手动将 " + localJarFile.getAbsolutePath() + " 复制到 " + originalJarFile.getAbsolutePath());
                 e.printStackTrace();
             }
-            
+
             // 验证破解是否成功
             boolean successfullyUpdated = verifyJarFileUpdated(originalJarFile, targetClass);
             if (!successfullyUpdated) {
                 System.err.println("警告：无法验证破解是否成功！请手动验证破解结果。");
             }
-            
+
             // 清理临时文件
             cleanupFiles(jarFileName, true);
-            
+
             System.out.println("成功完成所有操作！破解已完成！");
             System.out.println("备份文件保存在: " + backupJarFile.getAbsolutePath());
         } catch (Exception e) {
@@ -121,23 +123,23 @@ public class Main {
             e.printStackTrace();
         }
     }
-    
+
     private static void cleanupFiles(String jarFileName, boolean success) {
         try {
             System.out.println("正在清理临时文件...");
-            
+
             // 删除临时jar文件
             File localJarFile = new File(FILES_DIR, jarFileName);
             if (localJarFile.exists()) {
                 localJarFile.delete();
             }
-            
+
             // 删除临时生成的a.txt文件
             File outputFile = new File(FILES_DIR, OUTPUT_FILE);
             if (outputFile.exists()) {
                 outputFile.delete();
             }
-            
+
             // 删除temp jar文件
             File tempJarFile = new File(FILES_DIR, "temp_" + jarFileName);
             if (tempJarFile.exists()) {
@@ -146,13 +148,13 @@ public class Main {
 
             // 删除提取出的类文件目录
             deleteExtractedClassDirectories();
-            
+
             System.out.println("清理文件完成");
         } catch (Exception e) {
             System.err.println("清理文件时出错: " + e.getMessage());
         }
     }
-    
+
     private static void deleteExtractedClassDirectories() {
         // 删除从jar包中提取的类文件目录
         File filesDir = new File(FILES_DIR);
@@ -162,7 +164,7 @@ public class Main {
             }
         }
     }
-    
+
     private static void deleteDirectory(File directory) {
         if (directory.exists()) {
             File[] files = directory.listFiles();
@@ -178,71 +180,71 @@ public class Main {
             directory.delete();
         }
     }
-    
+
     private static void decompileJarFile(String jarFileName) throws IOException, InterruptedException {
         String command = String.format("java -jar %s/%s %s/%s --renamedupmembers true --hideutf false >> %s/%s",
                 FILES_DIR, CFR_JAR, FILES_DIR, jarFileName, FILES_DIR, OUTPUT_FILE);
-        
+
         // 确保a.txt为空
         Files.write(Paths.get(FILES_DIR, OUTPUT_FILE), new byte[0]);
-        
+
         Process process = Runtime.getRuntime().exec(new String[]{"bash", "-c", command});
         int exitCode = process.waitFor();
-        
+
         if (exitCode != 0) {
             throw new IOException("反编译命令执行失败，退出码: " + exitCode);
         }
-        
+
         System.out.println("反编译完成，输出到: " + FILES_DIR + "/" + OUTPUT_FILE);
     }
-    
+
     private static String findTargetClass() throws IOException {
         Path outputPath = Paths.get(FILES_DIR, OUTPUT_FILE);
         List<String> lines = Files.readAllLines(outputPath);
-        
+
         Pattern packagePattern = Pattern.compile("package\\s+([\\w.]+);");
         Pattern classPattern = Pattern.compile("(class|interface)\\s+(\\w+)");
-        
+
         String currentPackage = null;
         String currentClass = null;
-        
+
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
-            
+
             Matcher packageMatcher = packagePattern.matcher(line);
             if (packageMatcher.find()) {
                 currentPackage = packageMatcher.group(1);
             }
-            
+
             Matcher classMatcher = classPattern.matcher(line);
             if (classMatcher.find()) {
                 currentClass = classMatcher.group(2);
             }
-            
+
             if (line.contains(SEARCH_KEYWORD) && currentPackage != null && currentClass != null) {
                 return currentPackage + "." + currentClass;
             }
         }
-        
+
         return null;
     }
-    
+
     private static File extractClassFromJar(String jarFileName, String targetClass) throws IOException {
         String classFilePath = targetClass.replace('.', '/') + ".class";
         // 将类文件提取到对应的包路径下
         File outputDir = new File(FILES_DIR + "/origin_class");
         File packageDir = new File(outputDir, targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/'));
         packageDir.mkdirs();
-        
+
         File outputFile = new File(packageDir, targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class");
-        
+
         try (JarFile jarFile = new JarFile(new File(FILES_DIR, jarFileName))) {
             JarEntry entry = jarFile.getJarEntry(classFilePath);
             if (entry == null) {
                 System.err.println("在jar包中找不到类文件: " + classFilePath);
                 return null;
             }
-            
+
             try (InputStream is = jarFile.getInputStream(entry);
                  FileOutputStream fos = new FileOutputStream(outputFile)) {
                 byte[] buffer = new byte[1024];
@@ -252,11 +254,11 @@ public class Main {
                 }
             }
         }
-        
+
         System.out.println("从jar包中提取类文件: " + outputFile.getAbsolutePath());
         return outputFile;
     }
-    
+
     private static void modifyClassFile(String targetClass, String classPath) throws Exception {
         // 用于存储字段名与其注解值的映射
         Map<String, List<String>> fieldAnnotationMap = new HashMap<>();
@@ -265,17 +267,17 @@ public class Main {
         // 添加当前工作目录和files目录到类路径
         pool.insertClassPath(".");
         pool.insertClassPath(classPath);
-        
+
         CtClass cc = null;
-        String classFileName = classPath + "/origin_class" + "/" + 
-                    targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/') + 
+        String classFileName = classPath + "/origin_class" + "/" +
+                    targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/') +
                     "/" + targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class";
-            
+
             try (FileInputStream fis = new FileInputStream(classFileName)) {
                 cc = pool.makeClass(fis);
                 System.out.println("成功从文件加载类: " + classFileName);
             }
-        
+
         if (cc == null) {
             throw new NotFoundException("无法加载类: " + targetClass);
         }
@@ -368,30 +370,30 @@ public class Main {
 
         return false;
     }
-    
+
     private static void replaceClassInJar(String jarFileName, String targetClass) throws IOException {
         String classFilePath = targetClass.replace('.', '/') + ".class";
         // 获取提取出的修改后的类文件路径
-        File extractedClassFile = new File(FILES_DIR + "/cracked_class" + "/" + 
+        File extractedClassFile = new File(FILES_DIR + "/cracked_class" + "/" +
                 targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/') + "/" +
                 targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class");
         File tempJarFile = new File(FILES_DIR, "temp_" + jarFileName);
         File originalJarFile = new File(FILES_DIR, jarFileName);
-        
+
         try {
             // 验证修改后的类文件是否存在
             if (!extractedClassFile.exists()) {
                 throw new IOException("修改后的类文件不存在: " + extractedClassFile.getAbsolutePath());
             }
-            
+
             // 创建临时jar文件
             Files.copy(originalJarFile.toPath(), tempJarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
 
             String command = String.format("cd %s && jar uvf %s %s",
-                    FILES_DIR , jarFileName, "cracked_class" + "/" + classFilePath);
+                    FILES_DIR + "/cracked_class" , "../" + jarFileName, classFilePath);
 
             Process process = Runtime.getRuntime().exec(new String[]{"bash", "-c", command});
-            
+
             // 打印命令执行的错误输出
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
                 String line;
@@ -399,18 +401,18 @@ public class Main {
                     System.err.println("命令错误: " + line);
                 }
             }
-            
+
             int exitCode = process.waitFor();
-            
+
             if (exitCode != 0) {
                 throw new IOException("更新jar包命令执行失败，退出码: " + exitCode);
             }
-            
+
             System.out.println("成功将修改后的类文件替换回jar包");
         } catch (Exception e) {
             System.err.println("替换jar包中的类文件失败: " + e.getMessage());
             e.printStackTrace();
-            
+
             // 恢复原始jar
             if (tempJarFile.exists()) {
                 Files.copy(tempJarFile.toPath(), originalJarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
