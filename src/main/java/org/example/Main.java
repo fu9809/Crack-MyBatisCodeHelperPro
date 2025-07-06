@@ -24,8 +24,9 @@ public class Main {
     private static final String SEARCH_KEYWORD = "@SerializedName(value=\"validTo\")";
 
     public static void main(String[] args) {
+        Scanner scanner = null;
         try {
-            Scanner scanner = new Scanner(System.in);
+            scanner = new Scanner(System.in);
             System.out.println("请输入MyBatisCodeHelperPro的jar包完整路径：");
             String originalJarPath = scanner.nextLine().trim();
 
@@ -34,7 +35,7 @@ public class Main {
                 System.err.println("指定的文件不是jar包！请输入有效的jar文件路径。");
                 return;
             }
-
+            
             // 检查文件是否存在
             File originalJarFile = new File(originalJarPath);
             if (!originalJarFile.exists() || !originalJarFile.isFile()) {
@@ -121,6 +122,11 @@ public class Main {
         } catch (Exception e) {
             System.err.println("程序执行错误: " + e.getMessage());
             e.printStackTrace();
+        } finally {
+            // 确保Scanner资源被正确关闭
+            if (scanner != null) {
+                scanner.close();
+            }
         }
     }
 
@@ -158,9 +164,12 @@ public class Main {
     private static void deleteExtractedClassDirectories() {
         // 删除从jar包中提取的类文件目录
         File filesDir = new File(FILES_DIR);
-        for (File file : filesDir.listFiles()) {
-            if (file.isDirectory() && !file.getName().equals(".") && !file.getName().equals("..")) {
-                deleteDirectory(file);
+        File[] files = filesDir.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isDirectory() && !file.getName().equals(".") && !file.getName().equals("..")) {
+                    deleteDirectory(file);
+                }
             }
         }
     }
@@ -182,25 +191,78 @@ public class Main {
     }
 
     private static void decompileJarFile(String jarFileName) throws IOException, InterruptedException {
-        String command = String.format("java -jar %s/%s %s/%s --renamedupmembers true --hideutf false >> %s/%s",
-                FILES_DIR, CFR_JAR, FILES_DIR, jarFileName, FILES_DIR, OUTPUT_FILE);
+        // 使用跨平台的命令执行方式
+        String cfrJarPath = new File(FILES_DIR, CFR_JAR).getAbsolutePath();
+        String jarFilePath = new File(FILES_DIR, jarFileName).getAbsolutePath();
+        String outputFilePath = new File(FILES_DIR, OUTPUT_FILE).getAbsolutePath();
 
         // 确保a.txt为空
         Files.write(Paths.get(FILES_DIR, OUTPUT_FILE), new byte[0]);
 
-        Process process = Runtime.getRuntime().exec(new String[]{"bash", "-c", command});
+        // 构建命令
+        List<String> command = new ArrayList<>();
+        command.add("java");
+        command.add("-jar");
+        command.add(cfrJarPath);
+        command.add(jarFilePath);
+        command.add("--renamedupmembers");
+        command.add("true");
+        command.add("--hideutf");
+        command.add("false");
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectOutput(new File(outputFilePath));
+        pb.redirectErrorStream(true);
+        
+        // 设置环境变量以确保正确的编码
+        Map<String, String> env = pb.environment();
+        env.put("JAVA_TOOL_OPTIONS", "-Dfile.encoding=UTF-8");
+        env.put("LANG", "en_US.UTF-8");
+
+        Process process = pb.start();
         int exitCode = process.waitFor();
 
         if (exitCode != 0) {
             throw new IOException("反编译命令执行失败，退出码: " + exitCode);
         }
 
-        System.out.println("反编译完成，输出到: " + FILES_DIR + "/" + OUTPUT_FILE);
+        System.out.println("反编译完成，输出到: " + outputFilePath);
     }
 
     private static String findTargetClass() throws IOException {
         Path outputPath = Paths.get(FILES_DIR, OUTPUT_FILE);
-        List<String> lines = Files.readAllLines(outputPath);
+        if (!Files.exists(outputPath)) {
+            System.err.println("反编译输出文件不存在: " + outputPath);
+            return null;
+        }
+        
+        // 使用多种编码尝试读取文件
+        List<String> lines = null;
+        java.nio.charset.Charset[] charsets = {
+            java.nio.charset.StandardCharsets.UTF_8,
+            java.nio.charset.StandardCharsets.ISO_8859_1,
+            java.nio.charset.StandardCharsets.US_ASCII,
+            java.nio.charset.Charset.defaultCharset()
+        };
+        
+        for (java.nio.charset.Charset charset : charsets) {
+            try {
+                lines = Files.readAllLines(outputPath, charset);
+                System.out.println("成功使用编码读取文件: " + charset.name());
+                break;
+            } catch (java.nio.charset.MalformedInputException e) {
+                System.out.println("编码 " + charset.name() + " 读取失败，尝试下一个...");
+                continue;
+            } catch (Exception e) {
+                System.err.println("读取文件时发生错误: " + e.getMessage());
+                continue;
+            }
+        }
+        
+        if (lines == null) {
+            System.err.println("无法使用任何编码读取反编译输出文件");
+            return null;
+        }
 
         Pattern packagePattern = Pattern.compile("package\\s+([\\w.]+);");
         Pattern classPattern = Pattern.compile("(class|interface)\\s+(\\w+)");
@@ -232,8 +294,8 @@ public class Main {
     private static File extractClassFromJar(String jarFileName, String targetClass) throws IOException {
         String classFilePath = targetClass.replace('.', '/') + ".class";
         // 将类文件提取到对应的包路径下
-        File outputDir = new File(FILES_DIR + "/origin_class");
-        File packageDir = new File(outputDir, targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/'));
+        File outputDir = new File(FILES_DIR, "origin_class");
+        File packageDir = new File(outputDir, targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', File.separatorChar));
         packageDir.mkdirs();
 
         File outputFile = new File(packageDir, targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class");
@@ -269,14 +331,17 @@ public class Main {
         pool.insertClassPath(classPath);
 
         CtClass cc = null;
-        String classFileName = classPath + "/origin_class" + "/" +
-                    targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/') +
-                    "/" + targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class";
+        String classFileName = classPath + File.separator + "origin_class" + File.separator +
+                    targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', File.separatorChar) +
+                    File.separator + targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class";
 
-            try (FileInputStream fis = new FileInputStream(classFileName)) {
-                cc = pool.makeClass(fis);
-                System.out.println("成功从文件加载类: " + classFileName);
-            }
+        try (FileInputStream fis = new FileInputStream(classFileName)) {
+            cc = pool.makeClass(fis);
+            System.out.println("成功从文件加载类: " + classFileName);
+        } catch (Exception e) {
+            System.err.println("加载类文件失败: " + classFileName);
+            throw e;
+        }
 
         if (cc == null) {
             throw new NotFoundException("无法加载类: " + targetClass);
@@ -304,7 +369,9 @@ public class Main {
         }
 
         // 保存修改后的类文件到对应的包目录
-        cc.writeFile(classPath + "/cracked_class");
+        String outputDir = classPath + File.separator + "cracked_class";
+        new File(outputDir).mkdirs();
+        cc.writeFile(outputDir);
         System.out.println("类文件已成功修改");
     }
 
@@ -374,8 +441,8 @@ public class Main {
     private static void replaceClassInJar(String jarFileName, String targetClass) throws IOException {
         String classFilePath = targetClass.replace('.', '/') + ".class";
         // 获取提取出的修改后的类文件路径
-        File extractedClassFile = new File(FILES_DIR + "/cracked_class" + "/" +
-                targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', '/') + "/" +
+        File extractedClassFile = new File(FILES_DIR + File.separator + "cracked_class" + File.separator +
+                targetClass.substring(0, targetClass.lastIndexOf('.')).replace('.', File.separatorChar) + File.separator +
                 targetClass.substring(targetClass.lastIndexOf('.') + 1) + ".class");
         File tempJarFile = new File(FILES_DIR, "temp_" + jarFileName);
         File originalJarFile = new File(FILES_DIR, jarFileName);
@@ -389,16 +456,28 @@ public class Main {
             // 创建临时jar文件
             Files.copy(originalJarFile.toPath(), tempJarFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
 
-            String command = String.format("cd %s && jar uvf %s %s",
-                    FILES_DIR + "/cracked_class" , "../" + jarFileName, classFilePath);
+            // 使用跨平台的jar命令
+            String jarCommand = "jar";
+            String jarFilePath = originalJarFile.getAbsolutePath();
+            String classFileRelativePath = classFilePath;
+            
+            List<String> command = new ArrayList<>();
+            command.add(jarCommand);
+            command.add("uf");
+            command.add(jarFilePath);
+            command.add(classFileRelativePath);
 
-            Process process = Runtime.getRuntime().exec(new String[]{"bash", "-c", command});
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.directory(new File(FILES_DIR + File.separator + "cracked_class"));
+            pb.redirectErrorStream(true);
 
-            // 打印命令执行的错误输出
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+            Process process = pb.start();
+
+            // 打印命令执行的输出
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    System.err.println("命令错误: " + line);
+                    System.out.println("命令输出: " + line);
                 }
             }
 
